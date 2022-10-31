@@ -22,6 +22,10 @@ repositories {
 
 dependencies {
     implementation(files("libs/apdu4j.jar"))
+    implementation(files("libs/globalplatformpro-21.12.32-SNAPSHOT.jar"))
+    implementation("org.bouncycastle:bcpkix-jdk15on:1.70")
+    implementation("com.github.martinpaljak:capfile:21.04.05")
+    implementation("com.payneteasy:ber-tlv:1.0-11")
     implementation("com.github.ajalt.clikt:clikt:3.5.0")
     // Align versions of all Kotlin components
     implementation(platform("org.jetbrains.kotlin:kotlin-bom"))
@@ -42,6 +46,10 @@ dependencies {
 application {
     // Define the main class for the application.
     mainClass.set("jcscan.AppKt")
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions { jvmTarget = "11" }
 }
 
 tasks {

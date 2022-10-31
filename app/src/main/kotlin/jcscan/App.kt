@@ -16,19 +16,20 @@ import java.nio.ByteBuffer
 import java.util.*
 import javax.smartcardio.*
 import jnasmartcardio.Smartcardio
+import pro.javacard.gp.*
 
 fun <T> Optional<T>.unwrap(): T? = orElse(null)
 
 class App : CliktCommand() {
     private var manager: TerminalManager? = null
     val tKey by option("-k", "--key", help = "Transport key")
+    val defaultGPKey = "404142434445464748494A4B4C4D4E4F"
+    val kEnc by option("-ke", "--key-enc", help = "ENC key").default(defaultGPKey)
+    val kMac by option("-km", "--key-mac", help = "MAC key").default(defaultGPKey)
+    val kDek by option("-kd", "--key-dek", help = "DEK key").default(defaultGPKey)
     val version by option("-v", "--version", help = "Card version").int().default(2)
     val outputFile by option("-o", "--output", help = "Output file")
     override fun run() {
-        if (tKey == null) {
-            echo("Transport key is required")
-            return
-        }
         getTerminalManager()
         val terminals = manager!!.terminals()
         val readers = TerminalManager.listPCSC(terminals.list(), null, false)
@@ -53,6 +54,10 @@ class App : CliktCommand() {
                 3 -> {
                     // JCOP 3
                     scanVer3(it)
+                }
+                4 -> {
+                    // JCOP 4
+                    scanVer4(it)
                 }
                 else -> {
                     echo("Unsupported card version")
@@ -90,6 +95,10 @@ class App : CliktCommand() {
     }
 
     fun scanVer2(b: BIBO) {
+        if (tKey == null) {
+            echo("Transport key is required")
+            return
+        }
         // select root applet
         val tkeyBin = HexUtils.stringToBin(tKey)
         val selectRoot = CommandAPDU(0x00, 0xA4, 0x04, 0x00, tkeyBin)
@@ -121,6 +130,10 @@ class App : CliktCommand() {
     }
 
     fun scanVer3(b: BIBO) {
+        if (tKey == null) {
+            echo("Transport key is required")
+            return
+        }
         // select config applet
         val tkeyBin = HexUtils.stringToBin(tKey)
         val selectConfigApp =
@@ -226,6 +239,67 @@ class App : CliktCommand() {
         if (data.size > 0) {
             echo(String.format("%04X", addr) + " " + HexUtils.bin2hex(data))
         }
+    }
+
+    fun scanVer4(b: BIBO) {
+        val channel = APDUBIBO(b)
+        val gp = GPSession.discover(channel)
+        val mode = GPSession.defaultMode.clone()
+        val keys =
+                PlaintextKeys.fromKeys(
+                        HexUtils.hex2bin(kEnc),
+                        HexUtils.hex2bin(kMac),
+                        HexUtils.hex2bin(kDek)
+                )
+        try {
+            gp.openSecureChannel(keys, null, null, mode)
+        } catch (e: GPException) {
+            System.err.println("Failed to open secure channel: " + e.message)
+            return
+        }
+        for (i in
+                intArrayOf(
+                        0x1057,
+                        *IntArray(6) { 0x108A + it },
+                        *IntArray(16) { 0x1090 + it },
+                        *IntArray(16) { 0x10A0 + it },
+                        *IntArray(16) { 0x10C0 + it },
+                        0x200E,
+                        *IntArray(16) { 0x2010 + it },
+                        0x4004,
+                )) {
+            gpGetData(
+                    gp,
+                    0x00FE,
+                    ubyteArrayOf(
+                                    0xDFU,
+                                    0x2BU,
+                                    0x02U,
+                                    (i.toInt() shr 8 and 0xFF).toUByte(),
+                                    (i.toInt() and 0xFF).toUByte()
+                            )
+                            .toByteArray()
+            )
+        }
+    }
+
+    fun gpGetData(gp: GPSession, dgi: Int, data: ByteArray?): ResponseAPDU? {
+        val cmd =
+                CommandAPDU(
+                        GPSession.CLA_GP.toInt(),
+                        GPSession.INS_GET_DATA.toInt(),
+                        // high tag byte
+                        (dgi shr 8 and 0xFF).toByte().toInt(),
+                        (dgi and 0xFF).toByte().toInt(),
+                        data ?: byteArrayOf()
+                )
+        try {
+            val resp = gp.transmit(cmd)
+            if (resp.sw == 0x9000) {
+                return resp
+            }
+        } catch (e: GPException) {}
+        return null
     }
 }
 
